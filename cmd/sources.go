@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -30,8 +31,8 @@ func sources() *cobra.Command {
 		Long: `Download sources for a golang package or directory.
 		Must be one of the following:
 		
-			sources -o <path/to/output.tar> -m <module> -v <version>
-			sources -o <path/to/output.tar> -p <path/to/module>
+			sources -o <path/to/output.zip> -m <module> -v <version>
+			sources -o <path/to/output.zip> -p <path/to/module>
 		
 		`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,7 +73,8 @@ func sources() *cobra.Command {
 			if err := os.MkdirAll(outpath, 0o755); err != nil {
 				return fmt.Errorf("failed to create output directory %s: %v", outpath, err)
 			}
-			filename := filepath.Join(outpath, moduleName+".tar")
+			filename := cleanFilename(moduleName, version, "zip")
+			filename = filepath.Join(outpath, filename)
 			f, err := os.Create(filename)
 			if err != nil {
 				return fmt.Errorf("failed to create output file %s: %v", filename, err)
@@ -80,8 +82,8 @@ func sources() *cobra.Command {
 			defer f.Close()
 			zw := zip.NewWriter(f)
 			defer zw.Close()
-			if err := pkg.WriteToTar(fsys, zw); err != nil {
-				return fmt.Errorf("failed to write to tar: %v", err)
+			if err := pkg.WriteToZip(fsys, zw); err != nil {
+				return fmt.Errorf("failed to write to zip: %v", err)
 			}
 
 			if recursive {
@@ -100,7 +102,8 @@ func sources() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to get module %s: %v", p.Name, err)
 					}
-					filename := filepath.Join(outpath, p.Name+".tar")
+					filename := cleanFilename(p.Name, p.Version, "zip")
+					filename = filepath.Join(outpath, filename)
 					f, err := os.Create(filename)
 					if err != nil {
 						return fmt.Errorf("failed to create output file %s: %v", filename, err)
@@ -109,8 +112,8 @@ func sources() *cobra.Command {
 					zw := zip.NewWriter(f)
 					defer zw.Close()
 
-					if err := pkg.WriteToTar(fsys, zw); err != nil {
-						return fmt.Errorf("failed to write to tar: %v", err)
+					if err := pkg.WriteToZip(fsys, zw); err != nil {
+						return fmt.Errorf("failed to write to zip: %v", err)
 					}
 				}
 			}
@@ -124,4 +127,12 @@ func sources() *cobra.Command {
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
 	_ = cmd.MarkFlagRequired("out")
 	return cmd
+}
+
+func cleanFilename(module, version, ext string) string {
+	cleanModule := strings.Replace(module, "/", "_", -1)
+	if version != "" {
+		version = fmt.Sprintf("@%s", version)
+	}
+	return fmt.Sprintf("%s%s.%s", cleanModule, version, ext)
 }

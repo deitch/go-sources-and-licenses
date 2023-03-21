@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-func WriteToTar(fsys fs.FS, zw *zip.Writer) error {
-	// is our fs a tar reader in the first place?
+func WriteToZip(fsys fs.FS, zw *zip.Writer) error {
+	// is our fs a zip reader in the first place?
 	if tr, ok := fsys.(*zip.Reader); ok {
 		// just copy it all over
 		for _, f := range tr.File {
@@ -36,6 +36,10 @@ func WriteToTar(fsys fs.FS, zw *zip.Writer) error {
 			if err != nil {
 				return err
 			}
+			// ignore git directory
+			if path == ".git" || strings.HasPrefix(path, ".git/") {
+				return nil
+			}
 			fi, err := d.Info()
 			if err != nil {
 				return err
@@ -51,7 +55,7 @@ func WriteToTar(fsys fs.FS, zw *zip.Writer) error {
 				}
 				_, err := zw.CreateHeader(hdr)
 				return err
-			case d.Type() != fs.ModeSymlink:
+			case d.Type() == fs.ModeSymlink:
 				return fmt.Errorf("symlinks not supported for %s", path)
 			default:
 				w, err := zw.CreateHeader(hdr)
