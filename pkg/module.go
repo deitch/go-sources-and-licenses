@@ -21,15 +21,18 @@ const (
 	unknownLicenseType = "UNKNOWN"
 )
 
-/*
-How this works:
-1. Get the URL via proxy to download the zip of a module
-2. Pass the zip to the license parser
-3. Find all license files in the zip
-4. Parse for licenses
-*/
-
 func GetModule(module, version, proxy string) (fs.FS, error) {
+	if !strings.Contains(module, ".") {
+		return nil, fmt.Errorf("module must be a valid go module, does not support built in modules %s", module)
+	}
+	if version == "" {
+		log.Printf("getting latest version of %s", module)
+		versions, err := GetVersions(module, proxy)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get versions: %v", err)
+		}
+		version = versions[len(versions)-1]
+	}
 	// first see if we have it locally
 	goPath := os.Getenv("GOPATH")
 	if goPath != "" {
@@ -44,7 +47,8 @@ func GetModule(module, version, proxy string) (fs.FS, error) {
 	// we could not get it locally, so get it from the proxy
 
 	// get the module zip
-	resp, err := http.Get(fmt.Sprintf("%s/%s/@v/%s.zip", proxy, module, version))
+	u := fmt.Sprintf("%s/%s/@v/%s.zip", proxy, strings.ToLower(module), version)
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +92,7 @@ func FindLicenses(fsys fs.FS) []string {
 			return nil
 		}
 		filename := filepath.Base(p)
-		// ignore any tat are not a known filetype
+		// ignore any that are not a known filetype
 		if _, ok := fileNames[filename]; !ok {
 			return nil
 		}

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"archive/zip"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -13,40 +15,32 @@ import (
 /*
 How this works:
 1. Get the URL via proxy to download the zip of a module
-2. Pass the zip to the license parser
-3. Find all license files in the zip
-4. Parse for licenses
+2. Save the zip
 */
 
-type license struct {
-	module   string
-	version  string
-	licenses []string
-}
-
-func licenses() *cobra.Command {
+func sources() *cobra.Command {
 	var (
-		module, path, version string
-		recursive             bool
+		module, path, version, outpath string
+		recursive                      bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "licenses",
-		Short: "List licenses",
-		Long: `List licenses for a golang package or directory.
+		Use:   "sources",
+		Short: "Download source",
+		Long: `Download sources for a golang package or directory.
 		Must be one of the following:
 		
-			licenses -m <module> -v <version>
-			licenses -p <path/to/module>
+			sources -o <path/to/output.tar> -m <module> -v <version>
+			sources -o <path/to/output.tar> -p <path/to/module>
 		
 		`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var (
 				fsys       fs.FS
 				err        error
-				licenses   []license
 				moduleName string
 			)
+
 			switch {
 			case module != "" && path != "":
 				return fmt.Errorf("must specify either module or path")
@@ -74,8 +68,21 @@ func licenses() *cobra.Command {
 				moduleName = mod.Name
 			}
 
-			pkgLicenses := pkg.FindLicenses(fsys)
-			licenses = append(licenses, license{module: moduleName, version: version, licenses: pkgLicenses})
+			// create the outfile
+			if err := os.MkdirAll(outpath, 0o755); err != nil {
+				return fmt.Errorf("failed to create output directory %s: %v", outpath, err)
+			}
+			filename := filepath.Join(outpath, moduleName+".tar")
+			f, err := os.Create(filename)
+			if err != nil {
+				return fmt.Errorf("failed to create output file %s: %v", filename, err)
+			}
+			defer f.Close()
+			zw := zip.NewWriter(f)
+			defer zw.Close()
+			if err := pkg.WriteToTar(fsys, zw); err != nil {
+				return fmt.Errorf("failed to write to tar: %v", err)
+			}
 
 			if recursive {
 				sumFile := "go.sum"
@@ -93,12 +100,19 @@ func licenses() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to get module %s: %v", p.Name, err)
 					}
-					pkgLicenses := pkg.FindLicenses(fsys)
-					licenses = append(licenses, license{module: p.Name, version: p.Version, licenses: pkgLicenses})
+					filename := filepath.Join(outpath, p.Name+".tar")
+					f, err := os.Create(filename)
+					if err != nil {
+						return fmt.Errorf("failed to create output file %s: %v", filename, err)
+					}
+					defer f.Close()
+					zw := zip.NewWriter(f)
+					defer zw.Close()
+
+					if err := pkg.WriteToTar(fsys, zw); err != nil {
+						return fmt.Errorf("failed to write to tar: %v", err)
+					}
 				}
-			}
-			for _, l := range licenses {
-				fmt.Printf("%s %s %v\n", l.module, l.version, l.licenses)
 			}
 			return nil
 		},
@@ -107,5 +121,7 @@ func licenses() *cobra.Command {
 	cmd.Flags().StringVarP(&path, "dir", "d", "", "path to a golang module directory to check")
 	cmd.Flags().StringVarP(&version, "version", "v", "", "version of a module to check; no meaning when providing path. For module, leave blank to get latest.")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages")
+	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
+	_ = cmd.MarkFlagRequired("out")
 	return cmd
 }

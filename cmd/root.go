@@ -12,12 +12,13 @@ var proxyURL string
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "apko",
+		Use:               "license-reader",
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 	}
 
 	cmd.AddCommand(licenses())
+	cmd.AddCommand(sources())
 
 	cmd.PersistentFlags().StringVarP(&proxyURL, "proxy", "p", defaultProxyURL, "proxy URL to use")
 	return cmd
