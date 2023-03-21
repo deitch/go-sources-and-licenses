@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"io/fs"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,40 +21,60 @@ How this works:
 */
 
 func license() *cobra.Command {
+	var module, path, version string
+
 	cmd := &cobra.Command{
 		Use:   "license",
 		Short: "List licenses",
 		Long: `List licenses for a golang package, directory or go.sum file.
+		Must be one of the following:
 		
-			licenses <module> <version>
-	
+			licenses -m <module> -v <version>
+			licenses -p <path/to/module>
+		
 		`,
-		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			module := args[0]
-			version := args[1]
+			var (
+				fsys fs.FS
+				err  error
+			)
+			if module == "" && path == "" {
+				return fmt.Errorf("must specify either module or path")
+			}
+			if module != "" && path != "" {
+				return fmt.Errorf("must specify either module or path, not both")
+			}
 
-			// must be a URL or ignore
-			if !strings.Contains(module, ".") {
-				log.Fatalf("module must be a URL, do not support built in modules %s", module)
-			}
-			if version == "latest" {
-				log.Printf("getting latest version of %s", module)
-				versions, err := pkg.GetVersions(module, proxyURL)
-				if err != nil {
-					log.Fatalf("failed to get versions: %v", err)
+			if module != "" {
+				// must be a URL or ignore
+				if !strings.Contains(module, ".") {
+					log.Fatalf("module must be a URL, do not support built in modules %s", module)
 				}
-				version = versions[len(versions)-1]
-				log.Printf("version is %s", version)
+				if version == "" {
+					log.Printf("getting latest version of %s", module)
+					versions, err := pkg.GetVersions(module, proxyURL)
+					if err != nil {
+						log.Fatalf("failed to get versions: %v", err)
+					}
+					version = versions[len(versions)-1]
+					log.Printf("version is %s", version)
+				}
+				fsys, err = pkg.GetModule(module, version, proxyURL)
+				if err != nil {
+					log.Fatalf("failed to get module: %v", err)
+				}
 			}
-			fsys, err := pkg.GetModule(module, version, proxyURL)
-			if err != nil {
-				log.Fatalf("failed to get module: %v", err)
+			if path != "" {
+				fsys = os.DirFS(path)
 			}
-			licenses := pkg.FindLicenses(module, fsys)
+			licenses := pkg.FindLicenses(fsys)
 			fmt.Println(licenses)
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&module, "module", "m", "", "module to find and check from the Internet")
+	cmd.Flags().StringVarP(&path, "dir", "d", "", "path to a golang module directory to check")
+	cmd.Flags().StringVarP(&version, "version", "v", "", "version of a module to check; no meaning when providing path. For module, leave blank to get latest.")
+
 	return cmd
 }

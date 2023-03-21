@@ -78,7 +78,7 @@ func GetVersions(module, proxy string) ([]string, error) {
 
 }
 
-func FindLicenses(module string, fsys fs.FS) []string {
+func FindLicenses(fsys fs.FS) []string {
 	var (
 		licenses []string
 		isVendor bool
