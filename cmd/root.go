@@ -17,7 +17,7 @@ func New() *cobra.Command {
 		SilenceUsage:      true,
 	}
 
-	cmd.AddCommand(license())
+	cmd.AddCommand(licenses())
 
 	cmd.PersistentFlags().StringVarP(&proxyURL, "proxy", "p", defaultProxyURL, "proxy URL to use")
 	return cmd
