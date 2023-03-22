@@ -93,7 +93,7 @@ func FindLicenses(fsys fs.FS) []string {
 		}
 		filename := filepath.Base(p)
 		// ignore any that are not a known filetype
-		if _, ok := fileNames[filename]; !ok {
+		if _, ok := licenseFileNames[filename]; !ok {
 			return nil
 		}
 		// make sure it is not in a vendored path

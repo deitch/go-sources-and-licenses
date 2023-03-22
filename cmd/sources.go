@@ -3,6 +3,7 @@ package cmd
 import (
 	"archive/zip"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,11 +14,12 @@ import (
 	"github.com/deitch/license-reader/pkg"
 )
 
-/*
-How this works:
-1. Get the URL via proxy to download the zip of a module
-2. Save the zip
-*/
+type pkgInfo struct {
+	module   string
+	version  string
+	licenses []string
+	path     string
+}
 
 func sources() *cobra.Command {
 	var (
@@ -26,11 +28,14 @@ func sources() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "sources",
-		Short: "Download source",
+		Use:     "sources",
+		Aliases: []string{"source", "licenses", "license"},
+		Short:   "Download source",
 		Long: `Download sources for a golang package or directory.
 		Must be one of the following:
 		
+			licenses -m <module> -v <version>
+			licenses -p <path/to/module>
 			sources -o <path/to/output.zip> -m <module> -v <version>
 			sources -o <path/to/output.zip> -p <path/to/module>
 		
@@ -39,10 +44,13 @@ func sources() *cobra.Command {
 			var (
 				fsys       fs.FS
 				err        error
+				pkgInfos   []pkgInfo
 				moduleName string
 			)
 
 			switch {
+			case (cmd.CalledAs() == "sources" || cmd.CalledAs() == "source") && outpath == "":
+				return fmt.Errorf("must specify output path")
 			case module != "" && path != "":
 				return fmt.Errorf("must specify either module or path")
 			case module == "" && path == "":
@@ -70,19 +78,20 @@ func sources() *cobra.Command {
 			}
 
 			// create the outfile
-			if err := os.MkdirAll(outpath, 0o755); err != nil {
-				return fmt.Errorf("failed to create output directory %s: %v", outpath, err)
-			}
-			filename := cleanFilename(moduleName, version, "zip")
-			filename = filepath.Join(outpath, filename)
-			f, err := os.Create(filename)
+			w, filename, err := getWriter(outpath, moduleName, version)
 			if err != nil {
-				return fmt.Errorf("failed to create output file %s: %v", filename, err)
+				return fmt.Errorf("failed to create output file %s: %v", outpath, err)
 			}
-			defer f.Close()
-			zw := zip.NewWriter(f)
+			defer w.Close()
+			zw := zip.NewWriter(w)
 			defer zw.Close()
-			if err := pkg.WriteToZip(fsys, zw); err != nil {
+			pkgLicenses, err := pkg.WriteToZip(fsys, zw)
+			if err != nil {
+				return fmt.Errorf("failed to write to zip: %v", err)
+			}
+			pkgInfos = append(pkgInfos, pkgInfo{module: moduleName, version: version, licenses: pkgLicenses, path: filename})
+
+			if err != nil {
 				return fmt.Errorf("failed to write to zip: %v", err)
 			}
 
@@ -102,21 +111,25 @@ func sources() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to get module %s: %v", p.Name, err)
 					}
-					filename := cleanFilename(p.Name, p.Version, "zip")
-					filename = filepath.Join(outpath, filename)
-					f, err := os.Create(filename)
+					w, filename, err := getWriter(outpath, p.Name, p.Version)
 					if err != nil {
-						return fmt.Errorf("failed to create output file %s: %v", filename, err)
+						return fmt.Errorf("failed to create output file %s: %v", outpath, err)
 					}
-					defer f.Close()
-					zw := zip.NewWriter(f)
+					defer w.Close()
+					zw := zip.NewWriter(w)
 					defer zw.Close()
 
-					if err := pkg.WriteToZip(fsys, zw); err != nil {
+					pkgLicenses, err := pkg.WriteToZip(fsys, zw)
+					if err != nil {
 						return fmt.Errorf("failed to write to zip: %v", err)
 					}
+					pkgInfos = append(pkgInfos, pkgInfo{module: moduleName, version: version, licenses: pkgLicenses, path: filename})
 				}
 			}
+			for _, p := range pkgInfos {
+				fmt.Printf("%s %s %v %s\n", p.module, p.version, p.licenses, p.path)
+			}
+
 			return nil
 		},
 	}
@@ -125,7 +138,6 @@ func sources() *cobra.Command {
 	cmd.Flags().StringVarP(&version, "version", "v", "", "version of a module to check; no meaning when providing path. For module, leave blank to get latest.")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages")
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
-	_ = cmd.MarkFlagRequired("out")
 	return cmd
 }
 
@@ -135,4 +147,27 @@ func cleanFilename(module, version, ext string) string {
 		version = fmt.Sprintf("@%s", version)
 	}
 	return fmt.Sprintf("%s%s.%s", cleanModule, version, ext)
+}
+
+func getWriter(outpath, module, version string) (io.WriteCloser, string, error) {
+	var (
+		w        io.WriteCloser
+		filename string
+	)
+	if outpath == "" {
+		w = NopWriteCloser{io.Discard}
+	} else {
+		if err := os.MkdirAll(outpath, 0o755); err != nil {
+			return nil, "", fmt.Errorf("failed to create output directory %s: %v", outpath, err)
+		}
+		filename = cleanFilename(module, version, "zip")
+		filename = filepath.Join(outpath, filename)
+		f, err := os.Create(filename)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create output file %s: %v", filename, err)
+		}
+		w = f
+	}
+
+	return w, filename, nil
 }

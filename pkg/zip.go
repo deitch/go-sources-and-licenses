@@ -2,20 +2,34 @@ package pkg
 
 import (
 	"archive/zip"
-	"fmt"
 	"io"
 	"io/fs"
 	"strings"
 )
 
-func WriteToZip(fsys fs.FS, zw *zip.Writer) error {
+func WriteToZip(fsys fs.FS, zw *zip.Writer) ([]string, error) {
+	licenseListers, err := writeToZip(fsys, zw)
+	if err != nil {
+		return nil, err
+	}
+	var licenses []string
+	for _, r := range licenseListers {
+		if l, ok := r.(*licenseReader); ok {
+			licenses = append(licenses, l.licenses...)
+		}
+	}
+	return licenses, nil
+
+}
+func writeToZip(fsys fs.FS, zw *zip.Writer) ([]io.ReadCloser, error) {
+	var licenseListers []io.ReadCloser
 	// is our fs a zip reader in the first place?
 	if tr, ok := fsys.(*zip.Reader); ok {
 		// just copy it all over
 		for _, f := range tr.File {
 			w, err := zw.CreateHeader(&f.FileHeader)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			// nothing more to do with directories
 			if strings.HasSuffix(f.FileHeader.Name, "/") {
@@ -23,16 +37,19 @@ func WriteToZip(fsys fs.FS, zw *zip.Writer) error {
 			}
 			r, err := f.Open()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			defer r.Close()
-			_, err = io.Copy(w, r)
+			reader := licenseChecker(r, f.Name)
+			licenseListers = append(licenseListers, reader)
+			defer reader.Close()
+			_, err = io.Copy(w, reader)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	} else {
-		return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -56,7 +73,8 @@ func WriteToZip(fsys fs.FS, zw *zip.Writer) error {
 				_, err := zw.CreateHeader(hdr)
 				return err
 			case d.Type() == fs.ModeSymlink:
-				return fmt.Errorf("symlinks not supported for %s", path)
+				// ignore them
+				return nil
 			default:
 				w, err := zw.CreateHeader(hdr)
 				if err != nil {
@@ -67,10 +85,16 @@ func WriteToZip(fsys fs.FS, zw *zip.Writer) error {
 					return err
 				}
 				defer r.Close()
-				_, err = io.Copy(w, r)
+				reader := licenseChecker(r, path)
+				licenseListers = append(licenseListers, reader)
+				defer reader.Close()
+				_, err = io.Copy(w, reader)
 				return err
 			}
 		})
+		if err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return licenseListers, nil
 }

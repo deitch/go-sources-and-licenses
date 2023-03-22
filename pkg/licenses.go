@@ -1,5 +1,14 @@
 package pkg
 
+import (
+	"bytes"
+	"io"
+	"path/filepath"
+	"strings"
+
+	"github.com/google/licensecheck"
+)
+
 // all of these taken from https://github.com/golang/pkgsite/blob/8996ff632abee854aef1b764ca0501f262f8f523/internal/licenses/licenses.go#L338
 // which unfortunately is not exported. But fortunately is under BSD-style license.
 
@@ -48,11 +57,56 @@ var (
 	}
 )
 
-var fileNames map[string]bool
+var licenseFileNames map[string]bool
 
 func init() {
-	fileNames = make(map[string]bool)
+	licenseFileNames = make(map[string]bool)
 	for _, name := range FileNames {
-		fileNames[name] = true
+		licenseFileNames[name] = true
 	}
+}
+
+func licenseChecker(r io.ReadCloser, p string) io.ReadCloser {
+	filename := filepath.Base(p)
+	// ignore any that are not a known filetype
+	if _, ok := licenseFileNames[filename]; !ok {
+		return r
+	}
+	// make sure it is not in a vendored path
+	var isVendor bool
+	parts := strings.Split(filepath.Dir(p), string(filepath.Separator))
+	for _, part := range parts {
+		if part == "vendor" {
+			isVendor = true
+			break
+		}
+	}
+	if isVendor {
+		return r
+	}
+	// it matched, and is not in vendor; create a TeeWriter and a reader to process it
+	var buf bytes.Buffer
+	tr := io.TeeReader(r, &buf)
+
+	return &licenseReader{Reader: tr, buf: &buf}
+}
+
+type licenseReader struct {
+	io.Reader
+	buf      *bytes.Buffer
+	licenses []string
+}
+
+func (l *licenseReader) Close() error {
+	// process the data
+	contents := l.buf.Bytes()
+	cov := licensecheck.Scan(contents)
+
+	if cov.Percent < float64(coverageThreshold) {
+		l.licenses = append(l.licenses, unknownLicenseType)
+	}
+	for _, m := range cov.Match {
+		l.licenses = append(l.licenses, m.ID)
+	}
+	return nil
 }
