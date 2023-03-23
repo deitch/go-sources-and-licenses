@@ -35,9 +35,9 @@ func sources() *cobra.Command {
 		Must be one of the following:
 		
 			licenses -m <module> -v <version>
-			licenses -p <path/to/module>
+			licenses -d <path/to/module>
 			sources -o <path/to/output.zip> -m <module> -v <version>
-			sources -o <path/to/output.zip> -p <path/to/module>
+			sources -o <path/to/output.zip> -d <path/to/module>
 		
 		`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -123,7 +123,7 @@ func sources() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to write to zip: %v", err)
 					}
-					pkgInfos = append(pkgInfos, pkgInfo{module: moduleName, version: version, licenses: pkgLicenses, path: filename})
+					pkgInfos = append(pkgInfos, pkgInfo{module: p.Name, version: p.Version, licenses: pkgLicenses, path: filename})
 				}
 			}
 			for _, p := range pkgInfos {
