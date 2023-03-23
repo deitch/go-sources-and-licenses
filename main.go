@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/deitch/license-reader/cmd"
+	"github.com/deitch/go-sources-and-licenses/cmd"
 )
 
 func main() {

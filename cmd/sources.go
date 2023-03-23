@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/deitch/license-reader/pkg"
+	"github.com/deitch/go-sources-and-licenses/pkg"
 )
 
 type pkgInfo struct {

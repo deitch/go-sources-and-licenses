@@ -1,4 +1,4 @@
-module github.com/deitch/license-reader
+module github.com/deitch/go-sources-and-licenses
 
 go 1.19
 
