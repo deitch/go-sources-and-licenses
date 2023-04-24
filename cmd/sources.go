@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -17,20 +18,21 @@ import (
 )
 
 const (
-	modFile = "go.mod"
+	modFile         = "go.mod"
+	defaultTemplate = `{{.Module}} {{.Version}} {{.Licenses}} {{.Path}}`
 )
 
 type pkgInfo struct {
-	module   string
-	version  string
-	licenses []string
-	path     string
+	Module   string
+	Version  string
+	Licenses []string
+	Path     string
 }
 
 func sources() *cobra.Command {
 	var (
-		module, path, version, outpath string
-		recursive, find                bool
+		module, path, version, outpath, format string
+		recursive, find                        bool
 	)
 
 	cmd := &cobra.Command{
@@ -54,6 +56,11 @@ func sources() *cobra.Command {
 				pkgInfos   []pkgInfo
 				moduleName string
 			)
+
+			tmpl, err := template.New("sources").Parse(format)
+			if err != nil {
+				return fmt.Errorf("failed to parse template: %v", err)
+			}
 
 			switch {
 			case (cmd.CalledAs() == "sources" || cmd.CalledAs() == "source") && outpath == "":
@@ -108,7 +115,8 @@ func sources() *cobra.Command {
 			}
 
 			for _, p := range pkgInfos {
-				fmt.Printf("%s %s %v %s\n", p.module, p.version, p.licenses, p.path)
+				tmpl.Execute(os.Stdout, p)
+				fmt.Println()
 			}
 
 			return nil
@@ -120,6 +128,7 @@ func sources() *cobra.Command {
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages")
 	cmd.Flags().BoolVarP(&find, "find", "f", false, "find recursively within the provided directory, equivalent of 'find <dir> -name go.mod'; useful only with --dir, ignored otherwise")
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
+	cmd.Flags().StringVar(&format, "template", defaultTemplate, "output template to use. Available fields are: .Module, .Version, .Licenses, .Path")
 	return cmd
 }
 
@@ -177,7 +186,7 @@ func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos 
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to zip: %v", err)
 	}
-	pkgInfos = append(pkgInfos, pkgInfo{module: mod.Name, version: version, licenses: pkgLicenses, path: filename})
+	pkgInfos = append(pkgInfos, pkgInfo{Module: mod.Name, Version: version, Licenses: pkgLicenses, Path: filename})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to zip: %v", err)
@@ -211,7 +220,7 @@ func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos 
 			if err != nil {
 				return nil, fmt.Errorf("failed to write to zip: %v", err)
 			}
-			pkgInfos = append(pkgInfos, pkgInfo{module: p.Name, version: p.Version, licenses: pkgLicenses, path: filename})
+			pkgInfos = append(pkgInfos, pkgInfo{Module: p.Name, Version: p.Version, Licenses: pkgLicenses, Path: filename})
 		}
 	}
 	return
