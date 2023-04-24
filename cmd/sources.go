@@ -31,8 +31,8 @@ type pkgInfo struct {
 
 func sources() *cobra.Command {
 	var (
-		module, path, version, outpath, format string
-		recursive, find                        bool
+		module, path, version, outpath, format, prefix string
+		recursive, find                                bool
 	)
 
 	cmd := &cobra.Command{
@@ -76,7 +76,7 @@ func sources() *cobra.Command {
 					return fmt.Errorf("failed to get module %s: %v", module, err)
 				}
 				log.Debugf("writing module %s version %s from direct package", moduleName, version)
-				added, err := writeModule(outpath, version, fsys, recursive)
+				added, err := writeModule(outpath, prefix, version, fsys, recursive)
 				if err != nil {
 					return err
 				}
@@ -84,7 +84,7 @@ func sources() *cobra.Command {
 			case path != "" && !find:
 				fsys = os.DirFS(path)
 				log.Debugf("writing module %s version %s from directory %s", moduleName, version, path)
-				added, err := writeModule(outpath, version, fsys, recursive)
+				added, err := writeModule(outpath, prefix, version, fsys, recursive)
 				if err != nil {
 					return err
 				}
@@ -105,7 +105,7 @@ func sources() *cobra.Command {
 						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
 					}
 					log.Debugf("writing module %s version %s from inside directory %s", moduleName, version, path)
-					added, err := writeModule(outpath, version, sub, recursive)
+					added, err := writeModule(outpath, prefix, version, sub, recursive)
 					if err != nil {
 						return err
 					}
@@ -129,6 +129,7 @@ func sources() *cobra.Command {
 	cmd.Flags().BoolVarP(&find, "find", "f", false, "find recursively within the provided directory, equivalent of 'find <dir> -name go.mod'; useful only with --dir, ignored otherwise")
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
 	cmd.Flags().StringVar(&format, "template", defaultTemplate, "output template to use. Available fields are: .Module, .Version, .Licenses, .Path")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "prefix to prepend to each output filename")
 	return cmd
 }
 
@@ -140,7 +141,9 @@ func cleanFilename(module, version, ext string) string {
 	return fmt.Sprintf("%s%s.%s", cleanModule, version, ext)
 }
 
-func getWriter(outpath, module, version string) (io.WriteCloser, string, error) {
+// getWriter returns a writer for the output file, and the filename. The filename is relative to the outpath,
+// and not absolute
+func getWriter(outpath, prefix, module, version string) (io.WriteCloser, string, error) {
 	var (
 		w        io.WriteCloser
 		filename string
@@ -148,14 +151,18 @@ func getWriter(outpath, module, version string) (io.WriteCloser, string, error) 
 	if outpath == "" {
 		w = NopWriteCloser{io.Discard}
 	} else {
-		if err := os.MkdirAll(outpath, 0o755); err != nil {
-			return nil, "", fmt.Errorf("failed to create output directory %s: %v", outpath, err)
-		}
 		filename = cleanFilename(module, version, "zip")
-		filename = filepath.Join(outpath, filename)
-		f, err := os.Create(filename)
+		if prefix != "" {
+			filename = filepath.Join(prefix, filename)
+		}
+		outFile := filepath.Join(outpath, filename)
+		outDir := filepath.Dir(outFile)
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			return nil, "", fmt.Errorf("failed to create output directory %s: %v", outDir, err)
+		}
+		f, err := os.Create(outFile)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to create output file %s: %v", filename, err)
+			return nil, "", fmt.Errorf("failed to create output file %s: %v", outFile, err)
 		}
 		w = f
 	}
@@ -163,7 +170,7 @@ func getWriter(outpath, module, version string) (io.WriteCloser, string, error) 
 	return w, filename, nil
 }
 
-func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos []pkgInfo, err error) {
+func writeModule(outpath, prefix, version string, fsys fs.FS, recursive bool) (pkgInfos []pkgInfo, err error) {
 	f, err := fsys.Open(modFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open %s: %v", modFile, err)
@@ -175,7 +182,7 @@ func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos 
 		return nil, fmt.Errorf("failed to parse %s: %v", modFile, err)
 	}
 	// create the outfile
-	w, filename, err := getWriter(outpath, mod.Name, version)
+	w, filename, err := getWriter(outpath, prefix, mod.Name, version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file %s: %v", outpath, err)
 	}
@@ -208,7 +215,7 @@ func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos 
 			if err != nil {
 				return nil, fmt.Errorf("failed to get module %s: %v", p.Name, err)
 			}
-			w, filename, err := getWriter(outpath, p.Name, p.Version)
+			w, filename, err := getWriter(outpath, prefix, p.Name, p.Version)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create output file %s: %v", outpath, err)
 			}
