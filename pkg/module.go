@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/licensecheck"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -38,7 +38,7 @@ func GetModule(module, version, proxy string) (fs.FS, error) {
 	if goPath != "" {
 		modPath := filepath.Join(goPath, "pkg", "mod", fmt.Sprintf("%s@%s", module, version))
 		if fi, err := os.Stat(modPath); err == nil && fi != nil && fi.IsDir() {
-			log.Printf("found module locally at %s", modPath)
+			log.Debugf("found module %s locally at %s", module, modPath)
 			modFS := os.DirFS(modPath)
 			return modFS, nil
 		}
@@ -61,7 +61,7 @@ func GetModule(module, version, proxy string) (fs.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Print("found module via proxy")
+	log.Debugf("found module %s via proxy", module)
 	return zip.NewReader(bytes.NewReader(b), resp.ContentLength)
 }
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -9,9 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/deitch/go-sources-and-licenses/pkg"
+)
+
+const (
+	modFile = "go.mod"
 )
 
 type pkgInfo struct {
@@ -24,7 +30,7 @@ type pkgInfo struct {
 func sources() *cobra.Command {
 	var (
 		module, path, version, outpath string
-		recursive                      bool
+		recursive, find                bool
 	)
 
 	cmd := &cobra.Command{
@@ -38,6 +44,7 @@ func sources() *cobra.Command {
 			licenses -d <path/to/module>
 			sources -o <path/to/output.zip> -m <module> -v <version>
 			sources -o <path/to/output.zip> -d <path/to/module>
+			sources -o <path/to/output.zip> -d <path/to/module> -f
 		
 		`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,71 +68,45 @@ func sources() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to get module %s: %v", module, err)
 				}
-			case path != "":
+				log.Debugf("writing module %s version %s from direct package", moduleName, version)
+				added, err := writeModule(outpath, version, fsys, recursive)
+				if err != nil {
+					return err
+				}
+				pkgInfos = append(pkgInfos, added...)
+			case path != "" && !find:
 				fsys = os.DirFS(path)
-				modFile := "go.mod"
-				f, err := fsys.Open(modFile)
+				log.Debugf("writing module %s version %s from directory %s", moduleName, version, path)
+				added, err := writeModule(outpath, version, fsys, recursive)
 				if err != nil {
-					return fmt.Errorf("failed to open %s: %v", modFile, err)
+					return err
 				}
-				defer f.Close()
-				// read the package name
-				mod, err := pkg.ParseMod(f)
-				if err != nil {
-					return fmt.Errorf("failed to parse %s: %v", modFile, err)
-				}
-				moduleName = mod.Name
-			}
-
-			// create the outfile
-			w, filename, err := getWriter(outpath, moduleName, version)
-			if err != nil {
-				return fmt.Errorf("failed to create output file %s: %v", outpath, err)
-			}
-			defer w.Close()
-			zw := zip.NewWriter(w)
-			defer zw.Close()
-			pkgLicenses, err := pkg.WriteToZip(fsys, zw)
-			if err != nil {
-				return fmt.Errorf("failed to write to zip: %v", err)
-			}
-			pkgInfos = append(pkgInfos, pkgInfo{module: moduleName, version: version, licenses: pkgLicenses, path: filename})
-
-			if err != nil {
-				return fmt.Errorf("failed to write to zip: %v", err)
-			}
-
-			if recursive {
-				sumFile := "go.sum"
-				f, err := fsys.Open(sumFile)
-				if err != nil {
-					return fmt.Errorf("failed to open %s: %v", sumFile, err)
-				}
-				defer f.Close()
-				pkgs := pkg.ParseSum(f)
-				if err != nil {
-					return fmt.Errorf("failed to parse %s: %v", sumFile, err)
-				}
-				for _, p := range pkgs {
-					fsys, err = pkg.GetModule(p.Name, p.Version, proxyURL)
-					if err != nil {
-						return fmt.Errorf("failed to get module %s: %v", p.Name, err)
+				pkgInfos = append(pkgInfos, added...)
+			case path != "" && find:
+				log.Debugf("find enabled based at %s", path)
+				fsys = os.DirFS(path)
+				fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+					if err != nil && !errors.Is(err, io.EOF) {
+						return fmt.Errorf("failed to walk %s: %v", path, err)
 					}
-					w, filename, err := getWriter(outpath, p.Name, p.Version)
-					if err != nil {
-						return fmt.Errorf("failed to create output file %s: %v", outpath, err)
+					// we only are looking for directories with go.mod in them
+					if !strings.HasSuffix(path, modFile) {
+						return nil
 					}
-					defer w.Close()
-					zw := zip.NewWriter(w)
-					defer zw.Close()
-
-					pkgLicenses, err := pkg.WriteToZip(fsys, zw)
+					sub, err := fs.Sub(fsys, filepath.Dir(path))
 					if err != nil {
-						return fmt.Errorf("failed to write to zip: %v", err)
+						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
 					}
-					pkgInfos = append(pkgInfos, pkgInfo{module: p.Name, version: p.Version, licenses: pkgLicenses, path: filename})
-				}
+					log.Debugf("writing module %s version %s from inside directory %s", moduleName, version, path)
+					added, err := writeModule(outpath, version, sub, recursive)
+					if err != nil {
+						return err
+					}
+					pkgInfos = append(pkgInfos, added...)
+					return nil
+				})
 			}
+
 			for _, p := range pkgInfos {
 				fmt.Printf("%s %s %v %s\n", p.module, p.version, p.licenses, p.path)
 			}
@@ -137,6 +118,7 @@ func sources() *cobra.Command {
 	cmd.Flags().StringVarP(&path, "dir", "d", "", "path to a golang module directory to check")
 	cmd.Flags().StringVarP(&version, "version", "v", "", "version of a module to check; no meaning when providing path. For module, leave blank to get latest.")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages")
+	cmd.Flags().BoolVarP(&find, "find", "f", false, "find recursively within the provided directory, equivalent of 'find <dir> -name go.mod'; useful only with --dir, ignored otherwise")
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files")
 	return cmd
 }
@@ -170,4 +152,67 @@ func getWriter(outpath, module, version string) (io.WriteCloser, string, error) 
 	}
 
 	return w, filename, nil
+}
+
+func writeModule(outpath, version string, fsys fs.FS, recursive bool) (pkgInfos []pkgInfo, err error) {
+	f, err := fsys.Open(modFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %v", modFile, err)
+	}
+	defer f.Close()
+	// read the package name
+	mod, err := pkg.ParseMod(f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %v", modFile, err)
+	}
+	// create the outfile
+	w, filename, err := getWriter(outpath, mod.Name, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create output file %s: %v", outpath, err)
+	}
+	defer w.Close()
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	pkgLicenses, err := pkg.WriteToZip(fsys, zw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write to zip: %v", err)
+	}
+	pkgInfos = append(pkgInfos, pkgInfo{module: mod.Name, version: version, licenses: pkgLicenses, path: filename})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to write to zip: %v", err)
+	}
+
+	if recursive {
+		sumFile := "go.sum"
+		f, err := fsys.Open(sumFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open %s: %v", sumFile, err)
+		}
+		defer f.Close()
+		pkgs := pkg.ParseSum(f)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %v", sumFile, err)
+		}
+		for _, p := range pkgs {
+			fsys, err = pkg.GetModule(p.Name, p.Version, proxyURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get module %s: %v", p.Name, err)
+			}
+			w, filename, err := getWriter(outpath, p.Name, p.Version)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create output file %s: %v", outpath, err)
+			}
+			defer w.Close()
+			zw := zip.NewWriter(w)
+			defer zw.Close()
+
+			pkgLicenses, err := pkg.WriteToZip(fsys, zw)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write to zip: %v", err)
+			}
+			pkgInfos = append(pkgInfos, pkgInfo{module: p.Name, version: p.Version, licenses: pkgLicenses, path: filename})
+		}
+	}
+	return
 }
