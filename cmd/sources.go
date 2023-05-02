@@ -149,7 +149,7 @@ func sources() *cobra.Command {
 					return fmt.Errorf("failed to open %s: %v", target, err)
 				}
 				defer f.Close()
-				added, err := writeModuleFromBinary(outpath, prefix, f, existing, recursive)
+				added, err := writeModuleFromBinary(outpath, prefix, f, existing)
 				if err != nil {
 					return err
 				}
@@ -177,7 +177,7 @@ func sources() *cobra.Command {
 					if !ok {
 						return fmt.Errorf("failed to convert %s to io.ReaderAt", path)
 					}
-					added, err := writeModuleFromBinary(outpath, prefix, fra, existing, recursive)
+					added, err := writeModuleFromBinary(outpath, prefix, fra, existing)
 					// unfortunately, go's buildinfo.Read() does not distinguish between errors opening the file,
 					// and errors of the wrong file type. Oh well.
 					if err != nil {
@@ -203,7 +203,7 @@ func sources() *cobra.Command {
 	cmd.Flags().BoolVarP(&src, "src", "s", false, "argument is path to a golang module source directory to check. If provided with `--find`, will look for all directories in the tree, finding those with `go.mod` to treat as a module source and scan it.")
 	cmd.Flags().BoolVarP(&binary, "binary", "b", false, "argument is a binary to check. If provided with `--find`, will look for all files in the tree, to see if it is a go binary and scan it.")
 	cmd.Flags().StringVarP(&version, "version", "v", "", "version of a module to check; useful only with `--module`, no meaning otherwise. Leave blank to get latest.")
-	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages")
+	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "recurse into subpackages, valid only for --source")
 	cmd.Flags().BoolVarP(&find, "find", "f", false, "find recursively within the provided directory; useful only with --src and --binary, ignored otherwise")
 	cmd.Flags().StringVarP(&outpath, "out", "o", "", "output directory for the zip files; useful only with `sources` command, ignored otherwise")
 	cmd.Flags().StringVar(&format, "template", defaultTemplate, "output template to use. Available fields are: .Module, .Version, .Licenses, .Path")
@@ -289,7 +289,7 @@ func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, ex
 	return
 }
 
-func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[string]bool, recursive bool) (pkgInfos []pkgInfo, err error) {
+func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[string]bool) (pkgInfos []pkgInfo, err error) {
 	info, err := buildinfo.Read(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read build info: %v", err)
@@ -311,7 +311,7 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[s
 		if _, ok := existing[fmt.Sprintf("%s@%s", d.Path, d.Version)]; ok {
 			continue
 		}
-		fsys, info, err := getAndWriteModule(outpath, prefix, d.Path, d.Version)
+		_, info, err := getAndWriteModule(outpath, prefix, d.Path, d.Version)
 		if err != nil {
 			if errors.Is(err, ErrNoModFile{}) {
 				continue
@@ -320,34 +320,6 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[s
 		}
 		existing[info.String()] = true
 		pkgInfos = append(pkgInfos, info)
-
-		if recursive {
-			f, err := fsys.Open(modFile)
-			if err != nil {
-				log.Debugf("failed to open mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
-			} else {
-				defer f.Close()
-				mod, err := pkg.ParseMod(f)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
-				}
-				for _, p := range mod.Requires {
-					if _, ok := existing[p.String()]; ok {
-						continue
-					}
-					fsys, err := pkg.GetModule(p.Name, p.Version, proxyURL, false)
-					if err != nil {
-						return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
-					}
-					pkgs, err := writeModuleFromSource(outpath, prefix, p.Name, p.Version, fsys, existing, recursive)
-					if err != nil {
-						return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
-					}
-					existing[info.String()] = true
-					pkgInfos = append(pkgInfos, pkgs...)
-				}
-			}
-		}
 	}
 	return
 }
