@@ -13,6 +13,10 @@ type Package struct {
 	Hash     string // used only for go.sum
 }
 
+func (p Package) String() string {
+	return p.Name + "@" + p.Version
+}
+
 func ParseSum(r io.Reader) (pkgs []Package) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
