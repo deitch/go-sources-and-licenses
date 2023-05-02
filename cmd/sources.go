@@ -127,11 +127,12 @@ func sources() *cobra.Command {
 					if !strings.HasSuffix(path, modFile) {
 						return nil
 					}
-					sub, err := fs.Sub(fsys, filepath.Dir(path))
+					dir := filepath.Dir(path)
+					sub, err := fs.Sub(fsys, dir)
 					if err != nil {
 						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
 					}
-					log.Printf("writing module %s version %s from inside directory %s", moduleName, version, path)
+					log.Printf("writing module from directory %s", dir)
 					added, err := writeModuleFromSource(outpath, prefix, "", version, sub, existing)
 					if err != nil {
 						return err
