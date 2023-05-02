@@ -102,7 +102,7 @@ func sources() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to get module %s: %v", moduleName, err)
 				}
-				log.Debugf("writing module %s version %s from direct package", moduleName, version)
+				log.Printf("writing module %s version %s from direct package", moduleName, version)
 				added, err := writeModuleFromSource(outpath, prefix, moduleName, version, fsys, existing, recursive)
 				if err != nil {
 					return err
@@ -110,14 +110,14 @@ func sources() *cobra.Command {
 				pkgInfos = append(pkgInfos, added...)
 			case src && !find:
 				fsys = os.DirFS(target)
-				log.Debugf("writing module from source directory %s", target)
+				log.Printf("writing module from source directory %s", target)
 				added, err := writeModuleFromSource(outpath, prefix, "", version, fsys, existing, recursive)
 				if err != nil {
 					return err
 				}
 				pkgInfos = append(pkgInfos, added...)
 			case src && find:
-				log.Debugf("find for source enabled based at %s", target)
+				log.Printf("find for source enabled based at %s", target)
 				fsys = os.DirFS(target)
 				fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 					if err != nil && !errors.Is(err, io.EOF) {
@@ -131,7 +131,7 @@ func sources() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
 					}
-					log.Debugf("writing module %s version %s from inside directory %s", moduleName, version, path)
+					log.Printf("writing module %s version %s from inside directory %s", moduleName, version, path)
 					added, err := writeModuleFromSource(outpath, prefix, "", version, sub, existing, recursive)
 					if err != nil {
 						return err
@@ -143,7 +143,7 @@ func sources() *cobra.Command {
 					return nil
 				})
 			case binary && !find:
-				log.Debugf("writing info from binary  %s", target)
+				log.Printf("writing info from binary  %s", target)
 				f, err := os.Open(target)
 				if err != nil {
 					return fmt.Errorf("failed to open %s: %v", target, err)
@@ -155,7 +155,7 @@ func sources() *cobra.Command {
 				}
 				pkgInfos = append(pkgInfos, added...)
 			case binary && find:
-				log.Debugf("find for go binaries enabled based at %s", target)
+				log.Printf("find for go binaries enabled based at %s", target)
 				fsys = os.DirFS(target)
 				fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 					if err != nil && !errors.Is(err, io.EOF) {
@@ -183,6 +183,7 @@ func sources() *cobra.Command {
 					if err != nil {
 						return nil
 					}
+					log.Printf("scanned binary at %s", path)
 					for _, a := range added {
 						existing[a.String()] = true
 					}
@@ -259,7 +260,7 @@ func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, ex
 	if recursive {
 		f, err := fsys.Open(modFile)
 		if err != nil {
-			log.Debugf("failed to open mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
+			log.Warnf("failed to open mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
 		} else {
 			defer f.Close()
 			mod, err := pkg.ParseMod(f)
