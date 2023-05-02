@@ -30,6 +30,10 @@ type pkgInfo struct {
 	Path     string
 }
 
+func (p pkgInfo) String() string {
+	return fmt.Sprintf("%s@%s", p.Module, p.Version)
+}
+
 func sources() *cobra.Command {
 	var (
 		version, outpath, format, prefix     string
@@ -75,6 +79,7 @@ func sources() *cobra.Command {
 			var (
 				fsys       fs.FS
 				err        error
+				existing   = make(map[string]bool)
 				pkgInfos   []pkgInfo
 				moduleName string
 			)
@@ -98,7 +103,7 @@ func sources() *cobra.Command {
 					return fmt.Errorf("failed to get module %s: %v", moduleName, err)
 				}
 				log.Debugf("writing module %s version %s from direct package", moduleName, version)
-				added, err := writeModuleFromSource(outpath, prefix, moduleName, version, fsys, recursive)
+				added, err := writeModuleFromSource(outpath, prefix, moduleName, version, fsys, existing, recursive)
 				if err != nil {
 					return err
 				}
@@ -106,7 +111,7 @@ func sources() *cobra.Command {
 			case src && !find:
 				fsys = os.DirFS(target)
 				log.Debugf("writing module from source directory %s", target)
-				added, err := writeModuleFromSource(outpath, prefix, "", version, fsys, recursive)
+				added, err := writeModuleFromSource(outpath, prefix, "", version, fsys, existing, recursive)
 				if err != nil {
 					return err
 				}
@@ -127,9 +132,12 @@ func sources() *cobra.Command {
 						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
 					}
 					log.Debugf("writing module %s version %s from inside directory %s", moduleName, version, path)
-					added, err := writeModuleFromSource(outpath, prefix, "", version, sub, recursive)
+					added, err := writeModuleFromSource(outpath, prefix, "", version, sub, existing, recursive)
 					if err != nil {
 						return err
+					}
+					for _, a := range added {
+						existing[a.String()] = true
 					}
 					pkgInfos = append(pkgInfos, added...)
 					return nil
@@ -141,7 +149,7 @@ func sources() *cobra.Command {
 					return fmt.Errorf("failed to open %s: %v", target, err)
 				}
 				defer f.Close()
-				added, err := writeModuleFromBinary(outpath, prefix, f, recursive)
+				added, err := writeModuleFromBinary(outpath, prefix, f, existing, recursive)
 				if err != nil {
 					return err
 				}
@@ -169,9 +177,12 @@ func sources() *cobra.Command {
 					if !ok {
 						return fmt.Errorf("failed to convert %s to io.ReaderAt", path)
 					}
-					added, err := writeModuleFromBinary(outpath, prefix, fra, recursive)
+					added, err := writeModuleFromBinary(outpath, prefix, fra, existing, recursive)
 					if err != nil {
 						return err
+					}
+					for _, a := range added {
+						existing[a.String()] = true
 					}
 					pkgInfos = append(pkgInfos, added...)
 					return nil
@@ -235,12 +246,13 @@ func getWriter(outpath, prefix, module, version string) (io.WriteCloser, string,
 	return w, filename, nil
 }
 
-func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, recursive bool) (pkgInfos []pkgInfo, err error) {
+func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, existing map[string]bool, recursive bool) (pkgInfos []pkgInfo, err error) {
 	info, err := writeModule(outpath, prefix, name, version, fsys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get package %s@%s: %w", name, version, err)
 	}
 	pkgInfos = append(pkgInfos, info)
+	existing[info.String()] = true
 
 	if recursive {
 		f, err := fsys.Open(modFile)
@@ -253,17 +265,21 @@ func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, re
 				return nil, fmt.Errorf("failed to parse mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
 			}
 			for _, p := range mod.Requires {
+				if _, ok := existing[p.String()]; ok {
+					continue
+				}
 				fsys, err := pkg.GetModule(p.Name, p.Version, proxyURL, false)
 				if err != nil && !errors.Is(err, ErrNoModFile{}) {
 					return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
 				}
-				pkgs, err := writeModuleFromSource(outpath, prefix, p.Name, p.Version, fsys, recursive)
+				pkgs, err := writeModuleFromSource(outpath, prefix, p.Name, p.Version, fsys, existing, recursive)
 				if err != nil {
 					if errors.Is(err, ErrNoModFile{}) {
 						continue
 					}
 					return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
 				}
+				existing[p.String()] = true
 				pkgInfos = append(pkgInfos, pkgs...)
 			}
 		}
@@ -271,7 +287,7 @@ func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, re
 	return
 }
 
-func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, recursive bool) (pkgInfos []pkgInfo, err error) {
+func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[string]bool, recursive bool) (pkgInfos []pkgInfo, err error) {
 	info, err := buildinfo.Read(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read build info: %v", err)
@@ -282,11 +298,15 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, recursive bool
 		if err != nil {
 			return nil, fmt.Errorf("failed to get package %s@%s: %v", name, version, err)
 		}
+		existing[info.String()] = true
 		pkgInfos = append(pkgInfos, info)
 	}
 
 	for _, d := range info.Deps {
 		if d.Version == "" || d.Version == "(devel)" {
+			continue
+		}
+		if _, ok := existing[fmt.Sprintf("%s@%s", d.Path, d.Version)]; ok {
 			continue
 		}
 		fsys, info, err := getAndWriteModule(outpath, prefix, d.Path, d.Version)
@@ -296,6 +316,7 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, recursive bool
 			}
 			return nil, fmt.Errorf("failed to get package %s@%s: %v", d.Path, d.Version, err)
 		}
+		existing[info.String()] = true
 		pkgInfos = append(pkgInfos, info)
 
 		if recursive {
@@ -309,14 +330,18 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, recursive bool
 					return nil, fmt.Errorf("failed to parse mod file %s@%s %s: %v", info.Path, info.Version, modFile, err)
 				}
 				for _, p := range mod.Requires {
+					if _, ok := existing[p.String()]; ok {
+						continue
+					}
 					fsys, err := pkg.GetModule(p.Name, p.Version, proxyURL, false)
 					if err != nil {
 						return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
 					}
-					pkgs, err := writeModuleFromSource(outpath, prefix, p.Name, p.Version, fsys, recursive)
+					pkgs, err := writeModuleFromSource(outpath, prefix, p.Name, p.Version, fsys, existing, recursive)
 					if err != nil {
 						return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
 					}
+					existing[info.String()] = true
 					pkgInfos = append(pkgInfos, pkgs...)
 				}
 			}
