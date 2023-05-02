@@ -26,7 +26,7 @@ go-sources-and-licenses licenses -d /path/to/your/package
 
 In addition, you can recurse through all licenses by passing
 `--recursive`. In that case, in addition to reading the licenses
-for the provide module, it also will read the `go.sum` and find
+for the provide module, it also will read the `go.mod`, which contains the entire transitive dependency graph. and find
 the licenses for all dependencies.
 
 ## Sources

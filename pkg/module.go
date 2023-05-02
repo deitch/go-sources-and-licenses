@@ -21,7 +21,10 @@ const (
 	unknownLicenseType = "UNKNOWN"
 )
 
-func GetModule(module, version, proxy string) (fs.FS, error) {
+// GetModule get the module from the proxy, or local cache if it exists.
+// If force is true, it will always get the module from the proxy.
+// If it cannot find the go.sum locally, will get it from the proxy.
+func GetModule(module, version, proxy string, force bool) (fs.FS, error) {
 	if !strings.Contains(module, ".") {
 		return nil, fmt.Errorf("module must be a valid go module, does not support built in modules %s", module)
 	}
@@ -34,17 +37,23 @@ func GetModule(module, version, proxy string) (fs.FS, error) {
 		version = versions[len(versions)-1]
 	}
 	// first see if we have it locally
-	goPath := os.Getenv("GOPATH")
-	if goPath != "" {
-		modPath := filepath.Join(goPath, "pkg", "mod", fmt.Sprintf("%s@%s", module, version))
-		if fi, err := os.Stat(modPath); err == nil && fi != nil && fi.IsDir() {
-			log.Debugf("found module %s locally at %s", module, modPath)
-			modFS := os.DirFS(modPath)
-			return modFS, nil
+	if !force {
+		goPath := os.Getenv("GOPATH")
+		if goPath != "" {
+			modPath := filepath.Join(goPath, "pkg", "mod", fmt.Sprintf("%s@%s", module, version))
+			if fi, err := os.Stat(modPath); err == nil && fi != nil && fi.IsDir() {
+				log.Debugf("found module %s locally at %s", module, modPath)
+				modFS := os.DirFS(modPath)
+				// did it have go.mod?
+				if _, err := modFS.Open("go.mod"); err == nil {
+					return modFS, nil
+				}
+				// did not have go.mod, so just fall back to getting it from the proxy
+			}
 		}
 	}
 
-	// we could not get it locally, so get it from the proxy
+	// we could not get it locally, or were told not to, so get it from the proxy
 
 	// get the module zip
 	u := fmt.Sprintf("%s/%s/@v/%s.zip", proxy, strings.ToLower(module), version)

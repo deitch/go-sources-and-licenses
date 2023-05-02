@@ -111,8 +111,9 @@ func requireEntry(line []string) (p Package, err error) {
 	if len(line) < 2 {
 		return Package{}, fmt.Errorf("invalid go.mod: standalone require on a line")
 	}
+	// strip any leading or trailing quotes
 	entry := Package{
-		Name:    line[0],
+		Name:    strings.Trim(line[0], `"`),
 		Version: line[1],
 	}
 	if len(line) > 3 && strings.HasSuffix(line[len(line)-1], "indirect") {
@@ -126,9 +127,9 @@ func replaceEntry(line []string) (r Replace, err error) {
 		return r, fmt.Errorf("invalid go.mod: invalid replace line")
 	}
 	entry := Replace{
-		Old: line[0],
+		Old: strings.Trim(line[0], `"`),
 		New: Package{
-			Name: line[2],
+			Name: strings.Trim(line[2], `"`),
 		},
 	}
 	if len(line) > 3 {

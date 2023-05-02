@@ -11,10 +11,10 @@ const (
 
 var (
 	proxyURL string
-	debug    bool
 )
 
 func New() *cobra.Command {
+	var debug bool
 	cmd := &cobra.Command{
 		Use:               "license-reader",
 		DisableAutoGenTag: true,
