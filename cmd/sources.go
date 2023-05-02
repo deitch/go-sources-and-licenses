@@ -288,7 +288,24 @@ func writeModuleFromSource(outpath, prefix, name, version string, fsys fs.FS, ex
 			if _, ok := existing[p.String()]; ok {
 				continue
 			}
-			_, info, err := getAndWriteModule(outpath, prefix, p.Name, p.Version)
+			// was it replaced? Try by version and then by name
+			var (
+				replaced bool
+				info     pkgInfo
+			)
+			if r, ok := mod.Replace[p.String()]; ok {
+				p = r
+				replaced = true
+			} else if r, ok := mod.Replace[p.Name]; ok {
+				p = r
+				replaced = true
+			}
+			// is the module a path one due to replaces? We ignore those
+			if replaced && p.Version == "" {
+				continue
+			}
+			_, info, err = getAndWriteModule(outpath, prefix, p.Name, p.Version)
+
 			if err != nil {
 				return nil, fmt.Errorf("failed to get package %s@%s: %v", p.Name, p.Version, err)
 			}

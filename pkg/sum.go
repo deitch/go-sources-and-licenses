@@ -14,6 +14,9 @@ type Package struct {
 }
 
 func (p Package) String() string {
+	if p.Version == "" {
+		return p.Name
+	}
 	return p.Name + "@" + p.Version
 }
 
