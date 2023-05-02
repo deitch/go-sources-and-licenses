@@ -119,7 +119,7 @@ func sources() *cobra.Command {
 			case src && find:
 				log.Printf("find for source enabled based at %s", target)
 				fsys = os.DirFS(target)
-				fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+				err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 					if err != nil && !errors.Is(err, io.EOF) {
 						return fmt.Errorf("failed to walk %s: %v", path, err)
 					}
@@ -142,6 +142,9 @@ func sources() *cobra.Command {
 					pkgInfos = append(pkgInfos, added...)
 					return nil
 				})
+				if err != nil {
+					return fmt.Errorf("failed to walk directory %s: %v", target, err)
+				}
 			case binary && !find:
 				log.Printf("writing info from binary  %s", target)
 				f, err := os.Open(target)
@@ -157,7 +160,7 @@ func sources() *cobra.Command {
 			case binary && find:
 				log.Printf("find for go binaries enabled based at %s", target)
 				fsys = os.DirFS(target)
-				fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+				err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 					if err != nil && !errors.Is(err, io.EOF) {
 						return fmt.Errorf("failed to walk %s: %v", path, err)
 					}
@@ -190,6 +193,9 @@ func sources() *cobra.Command {
 					pkgInfos = append(pkgInfos, added...)
 					return nil
 				})
+				if err != nil {
+					return fmt.Errorf("failed to walk directory %s: %v", target, err)
+				}
 			}
 
 			for _, p := range pkgInfos {
