@@ -252,6 +252,11 @@ func getWriter(outpath, prefix, module, version string) (io.WriteCloser, string,
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
 			return nil, "", fmt.Errorf("failed to create output directory %s: %v", outDir, err)
 		}
+		// if the file already exists, we treat it as already downloaded
+		// and skip it
+		if fi, err := os.Stat(outFile); err == nil && fi.Size() != 0 {
+			return NopWriteCloser{io.Discard}, filename, nil
+		}
 		f, err := os.Create(outFile)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create output file %s: %v", outFile, err)
