@@ -21,7 +21,7 @@ type ModFile struct {
 func ParseMod(r io.Reader) (*ModFile, error) {
 	var m ModFile
 	sc := bufio.NewScanner(r)
-	var inRequire, inReplace bool
+	var inRequire, inReplace, inRetract bool
 
 	for sc.Scan() {
 		line := sc.Text()
@@ -75,12 +75,25 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 				return nil, err
 			}
 			m.Replace = append(m.Replace, entry)
+		case parts[0] == "retract":
+			if inRetract {
+				return nil, fmt.Errorf("invalid go.mod: nested require blocks")
+			}
+			if len(parts) < 2 {
+				return nil, fmt.Errorf("invalid go.mod: standalone retract on a line")
+			}
+			if parts[1] == "(" {
+				inRetract = true
+				continue
+			}
 		case parts[0] == ")":
 			switch {
 			case inRequire:
 				inRequire = false
 			case inReplace:
 				inReplace = false
+			case inRetract:
+				inRetract = false
 			default:
 				return nil, fmt.Errorf("invalid go.mod: unexpected closing paren")
 			}
@@ -99,6 +112,8 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 					return nil, err
 				}
 				m.Replace = append(m.Replace, entry)
+			case inRetract:
+				// just ignore
 			default:
 				return nil, fmt.Errorf("invalid go.mod: unexpected line")
 			}
