@@ -168,6 +168,13 @@ func sources() *cobra.Command {
 					if d.IsDir() {
 						return nil
 					}
+					fi, err := d.Info()
+					if err != nil {
+						return fmt.Errorf("failed to get info for %s: %v", path, err)
+					}
+					if !fi.Mode().IsRegular() {
+						return nil
+					}
 					// we only are looking for files of type golang
 					f, err := fsys.Open(path)
 					if err != nil {
