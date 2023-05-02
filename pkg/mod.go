@@ -7,19 +7,16 @@ import (
 	"strings"
 )
 
-type Replace struct {
-	Old string
-	New Package
-}
 type ModFile struct {
 	Name      string
 	GoVersion string
 	Requires  []Package
-	Replace   []Replace
+	Replace   map[string]Package
 }
 
 func ParseMod(r io.Reader) (*ModFile, error) {
 	var m ModFile
+	m.Replace = map[string]Package{}
 	sc := bufio.NewScanner(r)
 	var inRequire, inReplace, inRetract bool
 
@@ -70,11 +67,11 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 				inReplace = true
 				continue
 			}
-			entry, err := replaceEntry(parts[1:])
+			old, replace, err := replaceEntry(parts[1:])
 			if err != nil {
 				return nil, err
 			}
-			m.Replace = append(m.Replace, entry)
+			m.Replace[old.String()] = replace
 		case parts[0] == "retract":
 			if inRetract {
 				return nil, fmt.Errorf("invalid go.mod: nested require blocks")
@@ -107,11 +104,11 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 				}
 				m.Requires = append(m.Requires, entry)
 			case inReplace:
-				entry, err := replaceEntry(parts)
+				old, replace, err := replaceEntry(parts[1:])
 				if err != nil {
 					return nil, err
 				}
-				m.Replace = append(m.Replace, entry)
+				m.Replace[old.String()] = replace
 			case inRetract:
 				// just ignore
 			default:
@@ -137,18 +134,40 @@ func requireEntry(line []string) (p Package, err error) {
 	return entry, nil
 }
 
-func replaceEntry(line []string) (r Replace, err error) {
-	if len(line) < 3 || line[1] != "=>" {
-		return r, fmt.Errorf("invalid go.mod: invalid replace line")
+func replaceEntry(line []string) (old, new Package, err error) {
+	// potential structure of line:
+	// module-path [module-version] => replacement-path [replacement-version]
+	var (
+		preParts, postParts []string
+		inPre               = true
+	)
+
+	for _, part := range line {
+		if part == "=>" {
+			inPre = false
+			continue
+		}
+		if inPre {
+			preParts = append(preParts, part)
+		} else {
+			postParts = append(postParts, part)
+		}
 	}
-	entry := Replace{
-		Old: strings.Trim(line[0], `"`),
-		New: Package{
-			Name: strings.Trim(line[2], `"`),
-		},
+	if len(preParts) < 1 || len(postParts) < 1 {
+		return old, new, fmt.Errorf("invalid go.mod: invalid replace line")
 	}
-	if len(line) > 3 {
-		entry.New.Version = line[3]
+	old = Package{
+		Name: strings.Trim(preParts[0], `"`),
+	}
+	new = Package{
+		Name: strings.Trim(postParts[0], `"`),
+	}
+
+	if len(preParts) > 1 {
+		old.Version = preParts[1]
+	}
+	if len(postParts) > 1 {
+		new.Version = postParts[1]
 	}
 	return
 }
