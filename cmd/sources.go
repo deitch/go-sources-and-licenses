@@ -178,8 +178,10 @@ func sources() *cobra.Command {
 						return fmt.Errorf("failed to convert %s to io.ReaderAt", path)
 					}
 					added, err := writeModuleFromBinary(outpath, prefix, fra, existing, recursive)
+					// unfortunately, go's buildinfo.Read() does not distinguish between errors opening the file,
+					// and errors of the wrong file type. Oh well.
 					if err != nil {
-						return err
+						return nil
 					}
 					for _, a := range added {
 						existing[a.String()] = true
