@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"archive/zip"
+	"bytes"
 	"debug/buildinfo"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -109,6 +111,10 @@ func sources() *cobra.Command {
 				}
 				pkgInfos = append(pkgInfos, added...)
 			case src && !find:
+				// get version
+				if version == "" {
+					version = GoVersion(target)
+				}
 				fsys = os.DirFS(target)
 				log.Printf("writing module from source directory %s", target)
 				added, err := writeModuleFromSource(outpath, prefix, "", version, fsys, existing)
@@ -128,6 +134,9 @@ func sources() *cobra.Command {
 						return nil
 					}
 					dir := filepath.Dir(path)
+					if version == "" {
+						version = GoVersion(filepath.Join(target, dir))
+					}
 					sub, err := fs.Sub(fsys, dir)
 					if err != nil {
 						return fmt.Errorf("failed to get subdirectory %s: %v", path, err)
@@ -369,6 +378,10 @@ func writeModule(outpath, prefix, name, version string, fsys fs.FS) (p pkgInfo, 
 		}
 		name = mod.Name
 	}
+	// if there was no version given, and we can get .git info, use that to construct the version
+	if version == "" {
+	}
+
 	// create the outfile
 	w, filename, err := getWriter(outpath, prefix, name, version)
 	if err != nil {
@@ -392,4 +405,68 @@ func getAndWriteModule(outpath, prefix, name, version string) (fsys fs.FS, p pkg
 	}
 	p, err = writeModule(outpath, prefix, name, version, fsys)
 	return
+}
+
+// GoVersion calculates the go version to use for the given module.
+// Assumes existence of git command on the path.
+func GoVersion(dir string) string {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return ""
+	}
+	// get the most recent tag that matches semver
+	var (
+		tag    string
+		out    bytes.Buffer
+		stderr bytes.Buffer
+	)
+	cmd := exec.Command(git, "-C", dir, "--no-pager", "describe", "--match='v[0-9].[0-9].[0-9]*'", "--abbrev=0", "--tags")
+	cmd.Stderr = &stderr
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		log.Warnf("failed to get git tag: %s", stderr)
+		tag = "v0.0.0"
+	} else {
+		tag = strings.TrimSpace(out.String())
+		if tag == "" {
+			tag = "v0.0.0"
+		}
+	}
+	out.Reset()
+	stderr.Reset()
+
+	// get number of commits since last tag
+	commitList := "HEAD"
+	if tag != "v0.0.0" && tag != "" {
+		commitList = fmt.Sprintf("%s..HEAD", tag)
+	}
+	cmd = exec.Command(git, "-C", dir, "rev-list", commitList, "--count")
+	cmd.Stderr = &stderr
+	cmd.Stdout = &out
+	if err = cmd.Run(); err != nil {
+		log.Warnf("failed to get git rev-list: %s", stderr)
+		return ""
+	}
+	count := strings.TrimSpace(out.String())
+	// if the count is 0, just return the tag
+	if count == "0" {
+		return tag
+	}
+	out.Reset()
+	stderr.Reset()
+
+	cmd = exec.Command(git, "-C", dir, "--no-pager", "show",
+		"--quiet",
+		"--abbrev=12",
+		"--date=format-local:%Y%m%d%H%M%S",
+		"--format=%cd-%h")
+	cmd.Env = append(cmd.Env, "TZ=LTC")
+	cmd.Stderr = &stderr
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		log.Warnf("failed to get git show: %s", stderr)
+		return ""
+	}
+	dateAndCommit := strings.TrimSpace(out.String())
+	return fmt.Sprintf("%s-%s", tag, dateAndCommit)
 }
