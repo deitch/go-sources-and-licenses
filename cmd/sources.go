@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime/debug"
 	"strings"
 	"text/template"
 
@@ -331,13 +333,24 @@ func writeModuleFromBinary(outpath, prefix string, r io.ReaderAt, existing map[s
 		return nil, fmt.Errorf("failed to read build info: %v", err)
 	}
 	name, version := info.Main.Path, info.Main.Version
+
+	// we will not consider it an error if we cannot retrieve the version if it was calculated from ldflags,
+	// only if it was actually part of the official binary itself
+	var calculatedVersion bool
+	// try to parse version from build flags
+	if version == "" || version == "(devel)" {
+		version = parseVersionFromBuildFlags(info.Settings)
+		calculatedVersion = true
+	}
 	if version != "" && version != "(devel)" {
 		_, info, err := getAndWriteModule(outpath, prefix, name, version)
-		if err != nil {
+		if err != nil && !calculatedVersion {
 			return nil, fmt.Errorf("failed to get package %s@%s: %v", name, version, err)
 		}
-		existing[info.String()] = true
-		pkgInfos = append(pkgInfos, info)
+		if err == nil {
+			existing[info.String()] = true
+			pkgInfos = append(pkgInfos, info)
+		}
 	}
 
 	for _, d := range info.Deps {
@@ -424,7 +437,7 @@ func GoVersion(dir string) string {
 	cmd.Stderr = &stderr
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		log.Warnf("failed to get git tag: %s", stderr)
+		log.Warnf("failed to get git tag: %s", stderr.Bytes())
 		tag = "v0.0.0"
 	} else {
 		tag = strings.TrimSpace(out.String())
@@ -444,7 +457,7 @@ func GoVersion(dir string) string {
 	cmd.Stderr = &stderr
 	cmd.Stdout = &out
 	if err = cmd.Run(); err != nil {
-		log.Warnf("failed to get git rev-list: %s", stderr)
+		log.Warnf("failed to get git rev-list: %s", stderr.Bytes())
 		return ""
 	}
 	count := strings.TrimSpace(out.String())
@@ -464,9 +477,99 @@ func GoVersion(dir string) string {
 	cmd.Stderr = &stderr
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		log.Warnf("failed to get git show: %s", stderr)
+		log.Warnf("failed to get git show: %s", stderr.Bytes())
 		return ""
 	}
 	dateAndCommit := strings.TrimSpace(out.String())
 	return fmt.Sprintf("%s-%s", tag, dateAndCommit)
+}
+
+func parseVersionFromBuildFlags(settings []debug.BuildSetting) (fullVersion string) {
+	for _, s := range settings {
+		if s.Key != "-ldflags" {
+			continue
+		}
+		ldflags := s.Value
+		// parse for -X following by main.version or main.Version
+		if ldflags == "" {
+			return ""
+		}
+
+		for _, pattern := range knownBuildFlagPatterns {
+			groups := matchNamedCaptureGroups(pattern, ldflags)
+			v, ok := groups["version"]
+
+			if !ok {
+				continue
+			}
+
+			fullVersion = v
+			if !strings.HasPrefix(v, "v") {
+				fullVersion = fmt.Sprintf("v%s", v)
+			}
+			components := strings.Split(v, ".")
+
+			if len(components) == 0 {
+				continue
+			}
+
+			return
+		}
+		break
+	}
+	return
+}
+
+// This section below is taken from github.com/anchore/syft and modified. With thanks to their work on it.
+// It was released under the Apache 2.0 license.
+
+// devel is used to recognize the current default version when a golang main distribution is built
+// https://github.com/golang/go/issues/29228 this issue has more details on the progress of being able to
+// inject the correct version into the main module of the build process
+
+var knownBuildFlagPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)\.([gG]it)?([bB]uild)?[vV]ersion=(\S+/)*(?P<version>v?\d+.\d+.\d+[-\w]*)`),
+	regexp.MustCompile(`(?m)\.([tT]ag)=(\S+/)*(?P<version>v?\d+.\d+.\d+[-\w]*)`),
+}
+
+// matchNamedCaptureGroups takes a regular expression and string and returns all of the named capture group results in a map.
+// This is only for the first match in the regex. Callers shouldn't be providing regexes with multiple capture groups with the same name.
+func matchNamedCaptureGroups(regEx *regexp.Regexp, content string) map[string]string {
+	// note: we are looking across all matches and stopping on the first non-empty match. Why? Take the following example:
+	// input: "cool something to match against" pattern: `((?P<name>match) (?P<version>against))?`. Since the pattern is
+	// encapsulated in an optional capture group, there will be results for each character, but the results will match
+	// on nothing. The only "true" match will be at the end ("match against").
+	allMatches := regEx.FindAllStringSubmatch(content, -1)
+	var results map[string]string
+	for _, match := range allMatches {
+		// fill a candidate results map with named capture group results, accepting empty values, but not groups with
+		// no names
+		for nameIdx, name := range regEx.SubexpNames() {
+			if nameIdx > len(match) || len(name) == 0 {
+				continue
+			}
+			if results == nil {
+				results = make(map[string]string)
+			}
+			results[name] = match[nameIdx]
+		}
+		// note: since we are looking for the first best potential match we should stop when we find the first one
+		// with non-empty results.
+		if !isEmptyMap(results) {
+			break
+		}
+	}
+	return results
+}
+
+func isEmptyMap(m map[string]string) bool {
+	if len(m) == 0 {
+		return true
+	}
+	for _, value := range m {
+		if value != "" {
+			return false
+		}
+	}
+	return true
 }
