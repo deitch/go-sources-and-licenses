@@ -104,7 +104,7 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 				}
 				m.Requires = append(m.Requires, entry)
 			case inReplace:
-				old, replace, err := replaceEntry(parts[1:])
+				old, replace, err := replaceEntry(parts)
 				if err != nil {
 					return nil, err
 				}
