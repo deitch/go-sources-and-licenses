@@ -8,10 +8,11 @@ import (
 )
 
 type ModFile struct {
-	Name      string
-	GoVersion string
-	Requires  []Package
-	Replace   map[string]Package
+	Name        string
+	GoVersion   string
+	GoToolchain string
+	Requires    []Package
+	Replace     map[string]Package
 }
 
 func ParseMod(r io.Reader) (*ModFile, error) {
@@ -40,6 +41,11 @@ func ParseMod(r io.Reader) (*ModFile, error) {
 				return nil, fmt.Errorf("invalid go.mod: multiple go lines")
 			}
 			m.GoVersion = parts[1]
+		case parts[0] == "toolchain":
+			if m.GoToolchain != "" {
+				return nil, fmt.Errorf("invalid go.mod: multiple toolchain lines")
+			}
+			m.GoToolchain = parts[1]
 		case parts[0] == "require":
 			if inRequire {
 				return nil, fmt.Errorf("invalid go.mod: nested require blocks")
